@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>演唱會即時翻譯 - 使用說明</title>
+<style>
+  html, body { background: #000; color: #fff; margin: 0; padding: 0; }
+  body {
+    font-family: "Noto Sans TC", "PingFang TC", -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.75;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+  h1, h2, h3 { color: #fff; font-weight: 600; margin-top: 2em; }
+  h1 { font-size: 1.9em; border-bottom: 1px solid #333; padding-bottom: 0.4em; }
+  h2 { font-size: 1.4em; }
+  h3 { font-size: 1.1em; }
+  p, li { color: #ddd; }
+  a { color: #6cf; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: #1a1a1a; color: #fff;
+    padding: 2px 6px; border-radius: 3px;
+    font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.92em;
+  }
+  pre {
+    background: #111; padding: 14px 16px; border-radius: 4px;
+    overflow-x: auto; border: 1px solid #222;
+  }
+  pre code { background: transparent; padding: 0; }
+  blockquote {
+    border-left: 3px solid #444; background: #111;
+    padding: 8px 16px; margin: 1em 0; color: #bbb;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #333; padding: 8px 12px; text-align: left; }
+  th { background: #1a1a1a; color: #fff; font-weight: 600; }
+  ul, ol { padding-left: 1.5em; }
+  hr { border: none; border-top: 1px solid #333; margin: 2em 0; }
+  .note { color: #888; font-size: 0.92em; }
+</style>
+</head>
+<body>
+
+<h1>演唱會即時翻譯 - 使用說明</h1>
+
+<p>把麥克風收到的中文或越南文，即時翻譯成泰文、馬來文、印尼文、菲律賓文四種語言，同時顯示在大螢幕字幕上。</p>
+
+<h2>運作流程</h2>
+
+<ol>
+  <li>後端用 <code>sounddevice</code> 持續從麥克風讀音訊</li>
+  <li>用 WebRTC VAD 判斷「現在有沒有人在講話」，把每一句話切出來</li>
+  <li>用 Faster-Whisper 本地模型把語音轉成文字（中文/越南文自動偵測）</li>
+  <li>把文字（不是音檔）丟給 Gemini，一次翻譯成 4 種語言</li>
+  <li>透過 WebSocket 把結果推到前端網頁，字幕即時更新</li>
+</ol>
+
+<blockquote>
+為什麼比原本 Hukou 專案快？因為原本是把整段 WAV 音檔丟給 Gemini 同時做識別+翻譯，音檔 token 非常貴又慢。改成「本地識別 + 雲端翻譯」後，token 用量降到約原本的 1/100，延遲也從幾秒降到 1 秒左右。
+</blockquote>
+
+<h2>安裝步驟</h2>
+
+<h3>1. 安裝 Python 套件</h3>
+
+<pre><code>cd projects/concert-translator
+pip install -r requirements.txt</code></pre>
+
+<p>第一次執行時，Faster-Whisper 會自動下載模型（small 約 250 MB），下載完會快取，之後不會再下載。</p>
+
+<h3>2. 設定 Gemini API Key</h3>
+
+<p>到 <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a> 申請一把 API key（免費），然後：</p>
+
+<pre><code>cd backend
+cp .env.example .env
+# 用編輯器打開 .env，把 GEMINI_API_KEY=your_api_key_here 換成你的 key</code></pre>
+
+<h3>3. 啟動後端</h3>
+
+<pre><code>cd backend
+python main.py</code></pre>
+
+<p>看到「服務啟動」訊息後，瀏覽器打開 <code>http://localhost:8000</code> 就會看到字幕頁面。</p>
+
+<h2>前端字幕頁面</h2>
+
+<p>瀏覽器分成兩區：</p>
+<ul>
+  <li>頂部窄條：原文（中文或越南文）</li>
+  <li>下方 2×2 網格：泰、馬、印、菲 四種翻譯</li>
+</ul>
+
+<p>建議按 F11 進入全螢幕模式投影到現場大螢幕。右上角小圓點綠色＝WebSocket 已連線。</p>
+
+<h2>調整參數</h2>
+
+<p>所有參數集中在 <code>backend/.env</code> 與 <code>backend/config.py</code>：</p>
+
+<table>
+  <tr><th>參數</th><th>說明</th><th>建議值</th></tr>
+  <tr><td>WHISPER_MODEL</td><td>語音識別模型</td><td><strong>large-v3-turbo（推薦）</strong>／medium／small</td></tr>
+  <tr><td>WHISPER_CPU_THREADS</td><td>使用幾個 CPU 核心</td><td>0 = 全部（建議）</td></tr>
+  <tr><td>WHISPER_LANGUAGE</td><td>強制指定語言：zh / vi / auto</td><td>中文場次 zh、越南文場次 vi</td></tr>
+  <tr><td>WHISPER_DEVICE</td><td>cpu 或 cuda</td><td>有 NVIDIA 顯卡用 cuda 速度倍增</td></tr>
+  <tr><td>VAD_AGGRESSIVENESS</td><td>切句敏感度 0~3</td><td>2（演唱會吵雜環境建議 3）</td></tr>
+  <tr><td>MIN_SPEECH_DURATION_MS</td><td>短於這個的語音丟棄</td><td>1000 ms（過短易誤判語言）</td></tr>
+  <tr><td>SILENCE_TIMEOUT_MS</td><td>靜音多久判定一句話結束</td><td>700 ms</td></tr>
+  <tr><td>MAX_SPEECH_DURATION_MS</td><td>單句話最長秒數</td><td>8000 ms</td></tr>
+  <tr><td>AUDIO_QUEUE_MAX</td><td>音訊待處理隊列上限</td><td>5（滿了自動丟最舊）</td></tr>
+  <tr><td>GEMINI_MODEL</td><td>翻譯模型</td><td>gemini-2.5-flash-lite（免費版 RPM 較寬）</td></tr>
+  <tr><td>TRANSLATOR_WORKERS</td><td>翻譯並行數</td><td>2（免費版）／4~6（付費版）</td></tr>
+</table>
+
+<h3>Whisper 模型怎麼選</h3>
+<p><strong>關鍵認知：CPU 上沒有「又快又準」的解。</strong>所有 large 系列（包含 turbo）的 encoder 都很大，CPU 跑 encoder 是瓶頸，turbo 砍 decoder 的速度提升只有 GPU 上才看得出來。</p>
+
+<h4>CPU 場景（沒有 NVIDIA 顯卡）</h4>
+<table>
+  <tr><th>模型</th><th>中文精度</th><th>CPU RTF (12 核)</th><th>適用</th></tr>
+  <tr><td><strong>medium</strong></td><td>好</td><td>~1.5x（略慢於 realtime）</td><td><strong>CPU 最佳選擇</strong></td></tr>
+  <tr><td>small</td><td>差（中文短句易胡言亂語）</td><td>~0.5x</td><td>機器很弱才用</td></tr>
+  <tr><td>large-v3-turbo</td><td>近 large</td><td>~5x（太慢）</td><td>不要在 CPU 用</td></tr>
+  <tr><td>large-v3</td><td>最好</td><td>~6x（太慢）</td><td>不要在 CPU 用</td></tr>
+</table>
+
+<h4>GPU 場景（NVIDIA 顯卡 + <code>WHISPER_DEVICE=cuda</code>）</h4>
+<table>
+  <tr><th>模型</th><th>GPU RTF</th><th>適用</th></tr>
+  <tr><td><strong>large-v3-turbo</strong></td><td>0.1~0.3x（極快）</td><td><strong>GPU 最佳選擇</strong></td></tr>
+  <tr><td>large-v3</td><td>0.3~0.5x</td><td>追求最高精度</td></tr>
+</table>
+
+<h4>演唱會場景強烈建議：上 NVIDIA 顯卡</h4>
+<p>即使是入門卡（GTX 1660 / RTX 3050），跑 turbo 都能輕鬆即時。CPU 場景下中文翻譯精度與延遲注定有一個要妥協。</p>
+
+<h3>切換語言</h3>
+<p>預設 <code>zh</code>，越南文場次在 <code>backend/.env</code> 加 <code>WHISPER_LANGUAGE=vi</code>。</p>
+
+<h2>字幕顯示行為</h2>
+<p>四等分網格內每個語言獨立堆疊：</p>
+<ul>
+  <li>新句子從底部滑入，舊句子往上推</li>
+  <li>每個 cell 最多顯示 8 行，超過自動把最舊那行淡出</li>
+  <li>每句話保留 <strong>60 秒</strong>後自動淡出消失</li>
+  <li>越舊的句子越暗（最新最亮），方便視線聚焦</li>
+</ul>
+<p>要改保留秒數：編輯 <code>frontend/app.js</code> 開頭的 <code>LIFETIME_MS</code>（毫秒）；要改每 cell 最多行數：改 <code>MAX_LINES_PER_CELL</code>。</p>
+
+<h3>切換語言</h3>
+<p>預設 <code>zh</code>，演唱會主持人若改用越南文，在 <code>backend/.env</code> 加一行：</p>
+<pre><code>WHISPER_LANGUAGE=vi</code></pre>
+<p>中越夾雜的場次才用 <code>auto</code>，但短句容易被誤判成韓文/日文。</p>
+
+<h2>原本 Hukou 專案的問題與本版改進</h2>
+
+<table>
+  <tr><th>問題</th><th>本版做法</th></tr>
+  <tr><td>音檔 token 太貴</td><td>STT 改本地 Faster-Whisper，0 token</td></tr>
+  <tr><td>整段音檔送出延遲高</td><td>WebRTC VAD 一句話講完就送，平均 1 秒內</td></tr>
+  <tr><td>主持人連續講話會被卡住</td><td>3 個翻譯 worker 並行，且邏輯非阻塞</td></tr>
+  <tr><td>沒有前端</td><td>FastAPI + WebSocket 即時推送大字幕</td></tr>
+  <tr><td>Whisper 容易出「謝謝觀看」幻覺</td><td>幻覺黑名單 + 重複字過濾</td></tr>
+</table>
+
+<h2>檔案結構</h2>
+
+<pre><code>concert-translator/
+├── backend/
+│   ├── .env.example      # 環境變數範例（複製為 .env 後填 API key）
+│   ├── config.py         # 集中設定
+│   ├── audio_capture.py  # 麥克風 + VAD
+│   ├── stt.py            # Faster-Whisper 語音識別
+│   ├── translator.py     # Gemini 翻譯
+│   └── main.py           # FastAPI 主程式（啟動入口）
+├── frontend/
+│   ├── index.html        # 字幕頁面
+│   ├── style.css         # 黑底白字大字幕樣式
+│   └── app.js            # WebSocket 連線與渲染
+├── tests/
+│   ├── test_imports.py
+│   ├── test_stt_hallucination.py
+│   └── test_translator_mock.py
+└── requirements.txt</code></pre>
+
+<h2>疑難排解</h2>
+
+<h3>找不到麥克風</h3>
+<p>跑一次 <code>python -c "import sounddevice; print(sounddevice.query_devices())"</code> 看看系統有哪些音訊輸入。如果想指定特定裝置，可以在 <code>audio_capture.py</code> 的 <code>sd.RawInputStream(...)</code> 加 <code>device=N</code> 參數。</p>
+
+<h3>Whisper 第一次啟動很慢</h3>
+<p>正常的。下載 small 模型約 250 MB，下載+載入大約 30 秒到 1 分鐘。下次啟動只剩載入時間，約 5~10 秒。模型會存在 <code>backend/models/</code> 資料夾。</p>
+
+<h3>模型下載報錯 WinError 1314（沒有 symlink 權限）</h3>
+<p>這是 Windows 一般帳號不能建立符號連結造成的，與程式碼無關。本專案已改成把模型下載到 <code>backend/models/</code> 並以「複製檔案」方式存放來避開。若仍遇到，三選一：用系統管理員身分執行 PowerShell；或開啟 Windows 開發人員模式（設定 → 隱私權與安全性 → 開發人員專用）；或更新 <code>stt.py</code> 到最新版。</p>
+
+<h3>webrtcvad 安裝失敗（要 C++ Build Tools）</h3>
+<p>Windows 上改裝預編譯版 <code>webrtcvad-wheels</code>，不要裝 <code>webrtcvad</code>。匯入名稱一樣，程式碼不用改。requirements.txt 已改用這個套件。</p>
+
+<h3>翻譯延遲還是太高</h3>
+<ol>
+  <li>把 <code>WHISPER_MODEL</code> 從 small 改 base（速度快 2 倍但準確度略降）</li>
+  <li>把 <code>WHISPER_DEVICE</code> 改 cuda（如果有 NVIDIA 顯卡）</li>
+  <li>把 <code>SILENCE_TIMEOUT_MS</code> 從 700 降到 500（更快切句）</li>
+  <li>確認 Gemini 用的是 <code>gemini-2.5-flash</code> 而不是 pro 版</li>
+</ol>
+
+<h3>Gemini 回傳 429（rate limit）</h3>
+<p>免費版每分鐘有請求次數限制。演唱會場景建議升級到付費版（依量計費，便宜），或減少翻譯 worker 數量。</p>
+
+<h3>主持人說話很快會被切錯句</h3>
+<p>把 <code>SILENCE_TIMEOUT_MS</code> 提高到 1000~1200，避免太敏感切斷。</p>
+
+<h2>執行前的測試</h2>
+
+<pre><code>cd tests
+python test_imports.py            # 確認模組都能載入
+python test_stt_hallucination.py  # 確認幻覺過濾邏輯
+python test_translator_mock.py    # 確認 JSON 解析邏輯</code></pre>
+
+<h2>下一步可以加的功能</h2>
+
+<ul>
+  <li>翻譯歷史紀錄（演唱會結束後可匯出）</li>
+  <li>字幕字體大小調整 UI</li>
+  <li>多場域支援（多個房間獨立翻譯）</li>
+  <li>把麥克風輸入改成接混音器 line-in（你之前提到的選項）</li>
+</ul>
+
+<p class="note">建立日期：2026-05-19</p>
+
+</body>
+</html>

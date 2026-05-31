@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>演唱會即時翻譯</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header id="header">
+        <div id="original">
+            <span id="original-label">原文</span>
+            <span id="original-text">等待主持人開始說話...</span>
+        </div>
+        <div id="status">
+            <span id="status-dot"></span>
+            <span id="status-text">連線中</span>
+        </div>
+    </header>
+
+    <main id="grid">
+        <section class="cell" data-lang="thai">
+            <div class="lang-label">ภาษาไทย / 泰文</div>
+            <div class="line-stream" id="stream-thai"></div>
+        </section>
+        <section class="cell" data-lang="malay">
+            <div class="lang-label">Bahasa Melayu / 馬來文</div>
+            <div class="line-stream" id="stream-malay"></div>
+        </section>
+        <section class="cell" data-lang="indonesian">
+            <div class="lang-label">Bahasa Indonesia / 印尼文</div>
+            <div class="line-stream" id="stream-indonesian"></div>
+        </section>
+        <section class="cell" data-lang="filipino">
+            <div class="lang-label">Filipino / 菲律賓文</div>
+            <div class="line-stream" id="stream-filipino"></div>
+        </section>
+    </main>
+
+    <script src="/app.js"></script>
+</body>
+</html>

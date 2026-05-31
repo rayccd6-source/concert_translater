@@ -1,0 +1,17 @@
+# Web 框架
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+websockets==13.0
+
+# 音訊擷取與 VAD
+sounddevice==0.4.7
+numpy==1.26.4
+webrtcvad-wheels==2.0.14
+
+# 本地語音識別
+# 1.1.0+ 才支援 large-v3-turbo / turbo 模型
+faster-whisper>=1.1.0
+
+# Gemini 翻譯
+google-genai==0.3.0
+python-dotenv==1.0.1

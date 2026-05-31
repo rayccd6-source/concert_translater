@@ -1,0 +1,147 @@
+/* 演唱會即時翻譯 - 黑底白字大字幕 */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    width: 100%;
+    background: #000;
+    color: #fff;
+    font-family: "Noto Sans TC", "PingFang TC", -apple-system, sans-serif;
+    overflow: hidden;
+}
+
+#header {
+    height: 12vh;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2vw;
+    border-bottom: 1px solid #222;
+}
+
+#original {
+    display: flex;
+    align-items: baseline;
+    gap: 1.5vw;
+    flex: 1;
+    overflow: hidden;
+}
+
+#original-label {
+    font-size: 1.6vw;
+    color: #888;
+    flex-shrink: 0;
+}
+
+#original-text {
+    font-size: 2.4vw;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: opacity 0.3s;
+}
+
+#status {
+    display: flex;
+    align-items: center;
+    gap: 0.6vw;
+    font-size: 1.2vw;
+    color: #666;
+    flex-shrink: 0;
+    margin-left: 2vw;
+}
+
+#status-dot {
+    width: 0.8vw;
+    height: 0.8vw;
+    border-radius: 50%;
+    background: #f44;
+    transition: background 0.3s;
+}
+
+#status-dot.connected {
+    background: #4f4;
+}
+
+#grid {
+    height: 88vh;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 2px;
+    background: #222;
+}
+
+.cell {
+    background: #000;
+    padding: 2vw;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.lang-label {
+    font-size: 1.4vw;
+    color: #666;
+    margin-bottom: 1vw;
+    letter-spacing: 0.05em;
+}
+
+/* 字幕串流：新句子從底部進入、舊句子往上推、超過 60 秒淡出消失 */
+.line-stream {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;  /* 新行擠在底部 */
+    overflow: hidden;
+    gap: 0.6vw;
+}
+
+.line {
+    font-size: 2.6vw;
+    line-height: 1.35;
+    font-weight: 500;
+    word-break: break-word;
+    color: #fff;
+    /* 進場動畫：從下方滑入 + 淡入 */
+    animation: lineEnter 0.35s ease-out;
+    transition: opacity 0.6s ease-out, max-height 0.6s ease-out, margin 0.6s ease-out;
+    max-height: 30vh;
+    opacity: 1;
+}
+
+/* 越舊的句子越暗（最近的最亮）*/
+.line.age-1 { color: #ccc; }
+.line.age-2 { color: #999; }
+.line.age-3 { color: #666; }
+
+/* 即將消失：淡出並收合 */
+.line.expired {
+    opacity: 0;
+    max-height: 0;
+    margin-top: -0.6vw;
+    pointer-events: none;
+}
+
+@keyframes lineEnter {
+    from {
+        opacity: 0;
+        transform: translateY(20%);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 響應式：螢幕較窄時字體略縮 */
+@media (max-aspect-ratio: 4/3) {
+    .line { font-size: 2.2vw; }
+    #original-text { font-size: 2vw; }
+}
