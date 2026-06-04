@@ -21,9 +21,46 @@ WhisperModel = None
 download_model = None
 
 
+def _setup_cuda_dll_paths():
+    """
+    Windows + Python 3.8+ 安全機制：pip 裝的 nvidia 套件
+    (nvidia-cublas-cu12 / nvidia-cudnn-cu12) 把 cublas64_12.dll 等放在
+    site-packages/nvidia/<lib>/bin/，但 Python 不會自動加進 DLL 搜尋路徑，
+    導致 CTranslate2 載 GPU 模型時拋 "Library cublas64_12.dll is not found"。
+
+    這個函式把所有 nvidia/<lib>/bin 加進 os.add_dll_directory，讓 CTranslate2 找得到。
+    Linux / macOS 不需要，直接跳過。
+    """
+    if os.name != "nt":
+        return
+    try:
+        import importlib.util
+        added = []
+        # 列出 pip 可能裝的所有 nvidia 子套件
+        for pkg in (
+            "nvidia.cublas", "nvidia.cudnn",
+            "nvidia.cuda_runtime", "nvidia.cuda_nvrtc",
+            "nvidia.cufft", "nvidia.curand", "nvidia.cusolver",
+            "nvidia.cusparse",
+        ):
+            spec = importlib.util.find_spec(pkg)
+            if spec is None or not spec.origin:
+                continue
+            pkg_dir = os.path.dirname(spec.origin)
+            bin_dir = os.path.join(pkg_dir, "bin")
+            if os.path.isdir(bin_dir):
+                os.add_dll_directory(bin_dir)
+                added.append(pkg)
+        if added:
+            print(f"[STT] 已加入 CUDA DLL 路徑：{', '.join(added)}")
+    except Exception as e:
+        print(f"[STT] CUDA DLL 路徑設定異常（GPU 可能無法用，CPU 仍可）：{e}")
+
+
 def _lazy_import():
     global WhisperModel, download_model
     if WhisperModel is None:
+        _setup_cuda_dll_paths()  # 必須在 import faster_whisper 之前
         from faster_whisper import WhisperModel as _W
         from faster_whisper import download_model as _dl
         WhisperModel = _W
