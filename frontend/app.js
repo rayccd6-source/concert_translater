@@ -13,14 +13,20 @@
     const elStatusText = document.getElementById('status-text');
     const streams = {
         thai: document.getElementById('stream-thai'),
-        malay: document.getElementById('stream-malay'),
+        vietnamese: document.getElementById('stream-vietnamese'),
         indonesian: document.getElementById('stream-indonesian'),
         filipino: document.getElementById('stream-filipino'),
+    };
+    const CELL_KEYS = ['thai', 'vietnamese', 'indonesian', 'filipino'];
+
+    // 翻譯員直顯保護：某格被翻譯員直顯後，這段時間內忽略 Gemini 對該格的覆蓋
+    const INTERPRETER_PROTECT_MS = 10 * 1000;
+    const lastInterpreterTs = {
+        thai: 0, vietnamese: 0, indonesian: 0, filipino: 0,
     };
 
     let ws = null;
     let reconnectDelay = 1000;
-    let lastTimestamp = 0;
 
     function setStatus(connected) {
         if (connected) {
@@ -83,15 +89,22 @@
     }
 
     function applyTranslation(data) {
-        // 後到先到順序保護
-        if (data.timestamp && data.timestamp < lastTimestamp) return;
-        lastTimestamp = data.timestamp || Date.now() / 1000;
-
         if (data.original) elOriginal.textContent = data.original;
-        appendLine(streams.thai, data.thai);
-        appendLine(streams.malay, data.malay);
-        appendLine(streams.indonesian, data.indonesian);
-        appendLine(streams.filipino, data.filipino);
+
+        // source: "interpreter" = 翻譯員直顯（單格）; "gemini" = 4 國翻譯
+        const source = data.source || 'gemini';
+        const now = Date.now();
+        for (const key of CELL_KEYS) {
+            const text = data[key];
+            if (!text || !text.trim()) continue;
+            // Gemini 結果：若該格 10 秒內剛被翻譯員直顯覆蓋，跳過該格（其他格照常）
+            if (source === 'gemini'
+                && now - lastInterpreterTs[key] < INTERPRETER_PROTECT_MS) {
+                continue;
+            }
+            appendLine(streams[key], text);
+            if (source === 'interpreter') lastInterpreterTs[key] = now;
+        }
     }
 
     function connect() {

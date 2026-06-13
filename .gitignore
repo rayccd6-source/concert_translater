@@ -1,0 +1,17 @@
+# 環境變數（含 Gemini API 金鑰）— 絕對不要上傳
+.env
+
+# Python 虛擬環境（機器專屬，不可跨機器搬，搬了也會壞）
+.venv/
+venv/
+
+# Python 快取
+__pycache__/
+*.py[cod]
+
+# 下載的 Whisper 模型（檔案很大，clone 後會自動重新下載）
+models/
+
+# 作業系統雜項
+.DS_Store
+Thumbs.db

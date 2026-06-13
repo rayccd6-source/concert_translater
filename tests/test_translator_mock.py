@@ -11,19 +11,19 @@ from translator import parse_translation_response, is_suspicious_translation
 
 
 def test_clean_json():
-    raw = '{"original": "hi", "thai": "T1", "malay": "M1", "indonesian": "I1", "filipino": "F1"}'
+    raw = '{"original": "hi", "thai": "T1", "vietnamese": "M1", "indonesian": "I1", "filipino": "F1"}'
     r = parse_translation_response(raw)
     assert r is not None
     assert r["original"] == "hi"
     assert r["thai"] == "T1"
-    assert r["malay"] == "M1"
+    assert r["vietnamese"] == "M1"
     assert r["indonesian"] == "I1"
     assert r["filipino"] == "F1"
     print("[OK]  clean_json")
 
 
 def test_markdown_wrapped():
-    raw = '```json\n{"original": "hi", "thai": "T", "malay": "M", "indonesian": "I", "filipino": "F"}\n```'
+    raw = '```json\n{"original": "hi", "thai": "T", "vietnamese": "M", "indonesian": "I", "filipino": "F"}\n```'
     r = parse_translation_response(raw)
     assert r is not None
     assert r["thai"] == "T"
@@ -32,7 +32,7 @@ def test_markdown_wrapped():
 
 
 def test_missing_field():
-    raw = '{"original": "x", "thai": "T", "malay": "M"}'
+    raw = '{"original": "x", "thai": "T", "vietnamese": "M"}'
     r = parse_translation_response(raw)
     assert r is not None
     assert r["indonesian"] == ""
@@ -52,7 +52,7 @@ def test_empty_input():
 
 
 def test_fallback_original():
-    raw = '{"thai": "T", "malay": "M", "indonesian": "I", "filipino": "F"}'
+    raw = '{"thai": "T", "vietnamese": "M", "indonesian": "I", "filipino": "F"}'
     r = parse_translation_response(raw, fallback_original="ORIG")
     assert r is not None
     assert r["original"] == "ORIG"
@@ -60,34 +60,34 @@ def test_fallback_original():
 
 
 def test_suspicious_all_same():
-    data = {"thai": "Halo semua", "malay": "Halo semua",
+    data = {"thai": "Halo semua", "vietnamese": "Halo semua",
             "indonesian": "Halo semua", "filipino": "Halo semua"}
     assert is_suspicious_translation(data) is True
     print("[OK]  suspicious_all_same")
 
 
 def test_suspicious_three_same():
-    data = {"thai": "Halo semua", "malay": "Halo semua",
+    data = {"thai": "Halo semua", "vietnamese": "Halo semua",
             "indonesian": "Halo semua", "filipino": "Kumusta"}
     assert is_suspicious_translation(data) is True
     print("[OK]  suspicious_three_same")
 
 
 def test_normal_translation_not_suspicious():
-    data = {"thai": "T1", "malay": "M1", "indonesian": "I1", "filipino": "F1"}
+    data = {"thai": "T1", "vietnamese": "M1", "indonesian": "I1", "filipino": "F1"}
     assert is_suspicious_translation(data) is False
     print("[OK]  normal_not_suspicious")
 
 
 def test_two_same_two_different_not_suspicious():
     # Two pairs - not flagged
-    data = {"thai": "A", "malay": "A", "indonesian": "B", "filipino": "C"}
+    data = {"thai": "A", "vietnamese": "A", "indonesian": "B", "filipino": "C"}
     assert is_suspicious_translation(data) is False
     print("[OK]  two_pairs_not_suspicious")
 
 
 def test_only_one_field_filled():
-    data = {"thai": "T", "malay": "", "indonesian": "", "filipino": ""}
+    data = {"thai": "T", "vietnamese": "", "indonesian": "", "filipino": ""}
     assert is_suspicious_translation(data) is False
     print("[OK]  only_one_field_filled")
 

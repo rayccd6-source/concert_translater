@@ -3,7 +3,7 @@ Faster-Whisper 語音識別模組
 
 設計重點：
 - 首次載入會下載模型（~250 MB for small），之後快取在 ~/.cache/huggingface
-- 自動偵測中文或越南文（不需手動切換）
+- auto 模式自動偵測語言並路由（中文送翻譯，泰/越/印/菲 直顯，其他丟棄）
 - 把識別出來的文字推到 text_queue 給翻譯端
 - 過濾掉明顯是雜訊/空字串/重複幻覺的結果
 """
@@ -23,38 +23,55 @@ download_model = None
 
 def _setup_cuda_dll_paths():
     """
-    Windows + Python 3.8+ 安全機制：pip 裝的 nvidia 套件
-    (nvidia-cublas-cu12 / nvidia-cudnn-cu12) 把 cublas64_12.dll 等放在
-    site-packages/nvidia/<lib>/bin/，但 Python 不會自動加進 DLL 搜尋路徑，
-    導致 CTranslate2 載 GPU 模型時拋 "Library cublas64_12.dll is not found"。
+    Windows + Python 3.8+：pip 裝的 nvidia 套件把 DLL 放在
+    site-packages/nvidia/<lib>/bin/，但 Python / Windows 預設不會搜這裡。
 
-    這個函式把所有 nvidia/<lib>/bin 加進 os.add_dll_directory，讓 CTranslate2 找得到。
-    Linux / macOS 不需要，直接跳過。
+    關鍵：CTranslate2 用標準 LoadLibrary，需要在 PATH 環境變數裡看得到 DLL，
+    單純 os.add_dll_directory() 不夠（它只對有用 SEARCH_USER_DIRS flag 的
+    LoadLibraryEx 呼叫生效，CT2 4.7.x 並未使用該 flag）。兩個方法都加上去。
     """
     if os.name != "nt":
         return
     try:
         import importlib.util
         added = []
-        # 列出 pip 可能裝的所有 nvidia 子套件
+        new_paths = []
         for pkg in (
             "nvidia.cublas", "nvidia.cudnn",
             "nvidia.cuda_runtime", "nvidia.cuda_nvrtc",
             "nvidia.cufft", "nvidia.curand", "nvidia.cusolver",
             "nvidia.cusparse",
+            "nvidia.nvjitlink",
         ):
             spec = importlib.util.find_spec(pkg)
-            if spec is None or not spec.origin:
+            if spec is None:
                 continue
-            pkg_dir = os.path.dirname(spec.origin)
-            bin_dir = os.path.join(pkg_dir, "bin")
-            if os.path.isdir(bin_dir):
-                os.add_dll_directory(bin_dir)
-                added.append(pkg)
+            search_paths = []
+            if spec.origin:
+                search_paths.append(os.path.dirname(spec.origin))
+            if spec.submodule_search_locations:
+                search_paths.extend(spec.submodule_search_locations)
+            for pkg_dir in search_paths:
+                bin_dir = os.path.join(pkg_dir, "bin")
+                if os.path.isdir(bin_dir):
+                    new_paths.append(bin_dir)
+                    if pkg not in added:
+                        added.append(pkg)
+        if new_paths:
+            # 1. 加到 PATH（給 CT2 這種用標準 LoadLibrary 的 C 擴展）
+            os.environ["PATH"] = os.pathsep.join(new_paths) + os.pathsep + os.environ.get("PATH", "")
+            # 2. 同時也 add_dll_directory（給有用 SEARCH_USER_DIRS flag 的呼叫）
+            for p in new_paths:
+                try:
+                    os.add_dll_directory(p)
+                except Exception:
+                    pass
         if added:
             print(f"[STT] 已加入 CUDA DLL 路徑：{', '.join(added)}")
+        else:
+            print("[STT] 警告：找不到 nvidia 套件的 bin 資料夾，GPU 可能無法用")
     except Exception as e:
-        print(f"[STT] CUDA DLL 路徑設定異常（GPU 可能無法用，CPU 仍可）：{e}")
+        print(f"[STT] CUDA DLL 路徑設定異常：{e}")
 
 
 def _lazy_import():
@@ -77,6 +94,33 @@ HALLUCINATION_BLACKLIST = {
     "演唱會主持人發言",
     "transcribe",
 }
+
+
+# auto 模式下，Whisper 偵測到這些語言碼 → 直接顯示到對應前端格子（翻譯員直顯），
+# 不送 Gemini。key 是 Whisper 語言碼，value 是翻譯/前端的欄位名。
+DIRECT_LANG_MAP = {
+    "th": "thai",
+    "vi": "vietnamese",
+    "id": "indonesian",
+    "tl": "filipino",
+}
+
+# auto 模式只在這 5 國語言內判定（主持人中文 + 4 國翻譯員語言），
+# 避免中文短句被 Whisper 誤判成日/韓等「不可能出現」的語言而用錯模型解碼。
+ALLOWED_LANGS = ("zh",) + tuple(DIRECT_LANG_MAP)  # ("zh","th","vi","id","tl")
+
+
+def _pick_allowed_from_probs(all_probs, fallback_lang="zh", fallback_prob=0.0):
+    """
+    從 [(語言碼, 機率), ...] 清單裡，限定在 ALLOWED_LANGS（5 國）內挑機率最高者。
+    回傳 (語言碼, 機率)。清單為空時回傳 fallback；都不在 5 國內時退回清單第一名。
+    """
+    if all_probs:
+        allowed = [(lang, p) for lang, p in all_probs if lang in ALLOWED_LANGS]
+        if allowed:
+            return max(allowed, key=lambda x: x[1])
+        return all_probs[0]
+    return fallback_lang, fallback_prob
 
 
 def _is_hallucination(text: str) -> bool:
@@ -115,6 +159,7 @@ class SpeechToText:
         self.cpu_threads = cpu_threads
         self.num_workers = num_workers
         self.model: Optional[WhisperModel] = None
+        self.detector: Optional[WhisperModel] = None  # auto 模式專用的輕量語言偵測模型
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -125,28 +170,28 @@ class SpeechToText:
     def stop(self):
         self._stop_event.set()
 
+    def _resolve_model_source(self, name: str) -> str:
+        """
+        name 可以是現成資料夾路徑，或模型代號（如 medium / tiny）。
+        模型代號會下載到專案內 models/ 資料夾，並用 output_dir 走「複製檔案」模式，
+        避開 Windows 一般帳號沒有 symlink 權限造成的 WinError 1314。
+        """
+        if os.path.isdir(name):
+            return name
+        target_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "models",
+            f"faster-whisper-{name}",
+        )
+        os.makedirs(target_dir, exist_ok=True)
+        return download_model(name, output_dir=target_dir)
+
     def _load_model(self):
         _lazy_import()
         print(f"[STT] 載入 Whisper {self.model_size} 模型中（首次需下載）...")
 
-        # 若 model_size 本身就是一個資料夾路徑，直接用
-        if os.path.isdir(self.model_size):
-            model_source = self.model_size
-        else:
-            # 把模型下載到專案內的 models/ 資料夾。
-            # 用 output_dir 會讓 faster-whisper 以「複製檔案」方式存放，
-            # 而不是建立 symlink，藉此避開 Windows 一般帳號沒有 symlink
-            # 權限造成的 WinError 1314。
-            target_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "models",
-                f"faster-whisper-{self.model_size}",
-            )
-            os.makedirs(target_dir, exist_ok=True)
-            model_source = download_model(self.model_size, output_dir=target_dir)
-
         self.model = WhisperModel(
-            model_source,
+            self._resolve_model_source(self.model_size),
             device=self.device,
             compute_type=self.compute_type,
             cpu_threads=self.cpu_threads,
@@ -155,6 +200,22 @@ class SpeechToText:
         import os as _os
         actual_threads = self.cpu_threads or _os.cpu_count() or 4
         print(f"[STT] 模型載入完成 (cpu_threads={actual_threads}, num_workers={self.num_workers})")
+
+        # auto 模式：載入輕量偵測模型，專門判語言，讓主模型 encoder 只需跑一次。
+        detect_name = config.LANG_DETECT_MODEL.strip()
+        if config.WHISPER_LANGUAGE.lower() == "auto" and detect_name:
+            if detect_name == self.model_size:
+                # 偵測模型跟主模型同一顆 → 共用即可，不另外吃 VRAM（但等於沒加速）
+                self.detector = self.model
+                print(f"[STT] 語言偵測共用主模型（{detect_name}）")
+            else:
+                print(f"[STT] 載入語言偵測模型 {detect_name} 中（首次需下載）...")
+                self.detector = WhisperModel(
+                    self._resolve_model_source(detect_name),
+                    device=self.device,
+                    compute_type=self.compute_type,
+                )
+                print(f"[STT] 語言偵測模型載入完成（{detect_name}）")
 
     def _run(self):
         try:
@@ -181,23 +242,14 @@ class SpeechToText:
             duration = segment["duration"]
 
             try:
-                # 根據設定強制指定語言；演唱會場景強烈建議鎖定避免短句誤判
+                # auto = 自動偵測 + 路由；其他值 = 強制鎖定該語言（一律送 Gemini）
                 lang_setting = config.WHISPER_LANGUAGE.lower()
-                if lang_setting == "auto":
-                    language = None
-                elif lang_setting == "vi":
-                    language = "vi"
-                else:
-                    language = "zh"
+                forced = lang_setting != "auto"
 
                 t0 = time.time()
-                # 注意：刻意不用 initial_prompt。Whisper 已知 bug：
-                # 當語音模糊或太短時，會把 initial_prompt 的尾巴當輸出回傳
-                # （例如「請用中文轉寫」會一直被當識別結果）。
-                # language 強制鎖定就已足夠引導模型，prompt 邊際效益低、風險高。
-                segments, info = self.model.transcribe(
-                    audio_np,
-                    language=language,
+                # 注意：刻意不用 initial_prompt。Whisper 已知 bug：語音模糊或太短時，
+                # 會把 initial_prompt 尾巴當輸出回傳。language 鎖定已足夠引導模型。
+                transcribe_kwargs = dict(
                     beam_size=1,                       # 速度優先
                     vad_filter=False,                  # VAD 已在前面做
                     condition_on_previous_text=False,  # 避免幻覺累積
@@ -207,8 +259,38 @@ class SpeechToText:
                     compression_ratio_threshold=2.4,   # 阻止重複型幻覺
                 )
 
+                if forced:
+                    # 強制鎖定語言場次：直接用該語言解碼
+                    segments, info = self.model.transcribe(
+                        audio_np, language=lang_setting, **transcribe_kwargs
+                    )
+                    detected_lang = info.language
+                    lang_prob = getattr(info, "language_probability", 1.0) or 1.0
+                elif self.detector is not None:
+                    # auto：用輕量模型（tiny）先判語言（只在 5 國內挑），再用主模型
+                    # 鎖定該語言解碼一次。主模型 encoder 只跑一次，而非偵測+解碼跑兩次。
+                    result = self.detector.detect_language(audio_np)
+                    # 兼容不同版本回傳：(lang, prob, all_probs) 或 (lang, prob)
+                    all_probs = result[2] if len(result) > 2 else [(result[0], result[1])]
+                    detected_lang, lang_prob = _pick_allowed_from_probs(all_probs)
+                    segments, info = self.model.transcribe(
+                        audio_np, language=detected_lang, **transcribe_kwargs
+                    )
+                else:
+                    # auto 但沒有偵測模型（LANG_DETECT_MODEL=""）→ 退回主模型自偵測（較慢）。
+                    segments, info = self.model.transcribe(
+                        audio_np, language=None, **transcribe_kwargs
+                    )
+                    all_probs = (getattr(info, "all_language_probs", None)
+                                 or [(info.language,
+                                      getattr(info, "language_probability", 1.0) or 1.0)])
+                    detected_lang, lang_prob = _pick_allowed_from_probs(all_probs)
+                    if detected_lang != info.language:
+                        segments, info = self.model.transcribe(
+                            audio_np, language=detected_lang, **transcribe_kwargs
+                        )
+
                 text = " ".join(seg.text for seg in segments).strip()
-                detected_lang = info.language
                 elapsed = time.time() - t0
 
                 if not text or _is_hallucination(text):
@@ -216,13 +298,30 @@ class SpeechToText:
                     self.audio_queue.task_done() if hasattr(self.audio_queue, "task_done") else None
                     continue
 
-                print(f"[STT] 識別 ({detected_lang}, 語音 {duration:.2f}s / 處理 {elapsed:.2f}s)：{text}")
+                # ===== 語言路由 =====
+                # 主持人只講中文：只有「明確且高信心的翻譯員語言」走直顯，
+                # 其餘（中文、低信心、誤判）一律送 Gemini。Gemini 的 prompt 不假設
+                # 來源語言，所以這個「安全底桶」不會因語言不符而翻錯。
+                if (not forced
+                        and detected_lang in DIRECT_LANG_MAP
+                        and lang_prob >= config.LANG_CONFIDENCE_MIN):
+                    route = "direct"
+                    target_lang = DIRECT_LANG_MAP[detected_lang]
+                else:
+                    route = "translate"
+                    target_lang = None
+
+                route_desc = "翻譯" if route == "translate" else f"直顯→{target_lang}"
+                print(f"[STT] 識別 ({detected_lang} p={lang_prob:.2f}, 語音 {duration:.2f}s / "
+                      f"處理 {elapsed:.2f}s, {route_desc})：{text}")
 
                 # 用 put_nowait + drop-oldest，避免 STT 比翻譯快時堆積
                 payload = {
                     "text": text,
                     "lang": detected_lang,
                     "timestamp": timestamp,
+                    "route": route,
+                    "target_lang": target_lang,
                 }
                 try:
                     self.text_queue.put_nowait(payload)

@@ -3,7 +3,7 @@ Gemini 文字翻譯模組
 
 設計重點：
 - 只送文字（不送音檔），token 用量降到原本的 1/100 以下
-- 一次呼叫同時翻成 4 種語言（泰、馬、印、菲）
+- 一次呼叫同時翻成 4 種語言（泰、越、印、菲）
 - 用 response_mime_type=application/json 強制 JSON 輸出，省 prompt token
 - 多個並行 worker，避免單次 API 延遲堵塞整條 pipeline
 - 429 (rate limit) 與其他錯誤的優雅退避
@@ -26,7 +26,7 @@ except ImportError:
 import config
 
 
-REQUIRED_LANGS = ["thai", "malay", "indonesian", "filipino"]
+REQUIRED_LANGS = ["thai", "vietnamese", "indonesian", "filipino"]
 
 
 def parse_translation_response(raw: str, fallback_original: str = "") -> Optional[dict]:
@@ -73,9 +73,9 @@ def is_suspicious_translation(data: dict) -> bool:
 
 
 SYSTEM_INSTRUCTION = """你是演唱會即時同步翻譯員。
-任務：將使用者送來的文字（中文或越南文）翻譯成下列四種語言：
+任務：將使用者送來的文字翻譯成下列四種語言（不論原文是哪一種語言）：
 - thai：泰文 (Thai)
-- malay：馬來文 (Bahasa Melayu)
+- vietnamese：越南文 (Tiếng Việt)
 - indonesian：印尼文 (Bahasa Indonesia)
 - filipino：菲律賓文 (Tagalog/Filipino)
 
@@ -87,7 +87,7 @@ SYSTEM_INSTRUCTION = """你是演唱會即時同步翻譯員。
 5. 不要添加任何解釋、注釋或額外標點。
 
 輸出格式：
-{"original": "原文", "thai": "...", "malay": "...", "indonesian": "...", "filipino": "..."}
+{"original": "原文", "thai": "...", "vietnamese": "...", "indonesian": "...", "filipino": "..."}
 """
 
 
@@ -134,6 +134,21 @@ class Translator:
 
             text = item["text"]
             timestamp = item["timestamp"]
+            route = item.get("route", "translate")
+
+            # 翻譯員直顯：不送 Gemini，只組對應語言的 payload 直接推前端
+            if route == "direct":
+                target = item.get("target_lang")
+                if target:
+                    payload = {k: "" for k in REQUIRED_LANGS}
+                    payload[target] = text
+                    payload["original"] = text
+                    payload["timestamp"] = timestamp
+                    payload["worker_id"] = worker_id
+                    payload["source"] = "interpreter"
+                    print(f"[翻譯] worker {worker_id} 翻譯員直顯（{target}）：{text}")
+                    self.on_result(payload)
+                continue
 
             try:
                 t0 = time.time()
@@ -149,6 +164,7 @@ class Translator:
 
                 result["timestamp"] = timestamp
                 result["worker_id"] = worker_id
+                result["source"] = "gemini"
                 # 把原文保險地塞回去（萬一 Gemini 沒回 original）
                 result.setdefault("original", text)
 

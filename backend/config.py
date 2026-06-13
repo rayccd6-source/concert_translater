@@ -28,9 +28,25 @@ WHISPER_CPU_THREADS = int(os.getenv("WHISPER_CPU_THREADS", "0"))
 # 同時處理的音訊段並行度（CPU 設 1 即可，多了反而互搶資源）
 WHISPER_NUM_WORKERS = int(os.getenv("WHISPER_NUM_WORKERS", "1"))
 
-# 強制指定語言：zh（中文）/ vi（越南文）/ auto（自動偵測）
-# 演唱會場景強烈建議鎖定，避免短句被誤判成韓文/日文等。
-WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "zh")
+# 語言模式：
+#   auto（預設）→ 每段自動偵測語言並路由：
+#       zh             → 送 Gemini 翻 4 國
+#       th/vi/id/tl    → 直接顯示到對應格（翻譯員直顯，跳過 Gemini）
+#       其他 / 信心不足 → 丟棄
+#   zh / vi / 其他    → 強制鎖定該語言，一律送 Gemini（單一語言主持人場次用）
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "auto")
+
+# auto 模式下，偵測語言的信心低於此值就丟棄（避免短句誤判亂路由）
+LANG_CONFIDENCE_MIN = float(os.getenv("LANG_CONFIDENCE_MIN", "0.7"))
+
+# auto 模式的語言偵測模型：用一顆「輕量模型」專門判語言，再用主模型（medium）
+# 鎖定該語言解碼一次。如此主模型的 encoder 只跑一次，而非「偵測 + 解碼」跑兩次，
+# 在沒有 Tensor Core 的弱 GPU（如 GTX 1650）上幾乎砍半 STT 延遲。
+#   tiny（預設）：偵測極快，5 國語言差異大、判得準
+#   base：偵測略準一點、略慢，VRAM 不足或想省可留 tiny
+#   設成空字串 "" → 關閉，退回主模型自己偵測（較慢）
+# 只有在 WHISPER_LANGUAGE=auto 時才會載入這顆模型。
+LANG_DETECT_MODEL = os.getenv("LANG_DETECT_MODEL", "tiny")
 
 # 注意：不使用 initial_prompt。Whisper 已知 bug 會把 prompt 尾巴當識別結果輸出，
 # 而強制 language 已經足夠引導模型用對的語言識別。
