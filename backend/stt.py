@@ -133,6 +133,18 @@ def _is_hallucination(text: str) -> bool:
     # 重複字元（例：哈哈哈哈哈哈 整段一樣）— 門檻放寬到 >= 5
     if len(set(text_lower)) <= 2 and len(text_lower) >= 5:
         return True
+    # 連續重複的詞/片語（幻覺常見，如「都好啊 都好啊」）
+    words = text_lower.split()
+    for i in range(len(words) - 1):
+        if words[i] == words[i + 1] and len(words[i]) >= 2:
+            return True
+    # 整段是同一短語黏接重複（無空格中文，如「都好啊都好啊都好啊」）
+    compact = text_lower.replace(" ", "")
+    for plen in range(1, 5):
+        unit = compact[:plen]
+        if len(compact) >= plen * 3 and unit * (len(compact) // plen) == compact \
+                and len(compact) % plen == 0:
+            return True
     return False
 
 
