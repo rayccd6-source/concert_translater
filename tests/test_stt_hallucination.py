@@ -20,8 +20,17 @@ def test_filter_hallucinations():
         ("a", True),                  # 太短
         ("", True),                   # 空字串
         ("大家好歡迎來到今晚的演唱會", False),
-        ("Xin chào các bạn", False),  # 越南文
+        ("Xin chao cac ban", False),  # 越南文（去聲調避免終端機編碼問題）
         ("好的", False),
+        # === 新增：變體字與整句精確比對 ===
+        ("謝謝收看", True),            # 收看變體
+        ("感謝收看", True),
+        ("YOYO 獨播劇場", True),       # 獨播劇場子字串
+        ("Thank you.", True),         # 整句精確比對（含標點）
+        ("謝謝。", True),             # 整句精確比對（中文標點）
+        ("bye bye", True),
+        ("謝謝大家今天來到演唱會現場", False),  # 含「謝謝大家」但是真話，不能誤殺
+        ("thank you everyone welcome to the show", False),  # 含 thank you 但是真話
     ]
     fail = 0
     for text, expected in cases:

@@ -193,12 +193,24 @@ class Translator:
                 system_instruction=SYSTEM_INSTRUCTION,
                 response_mime_type="application/json",
                 temperature=0.3,
-                max_output_tokens=1024,  # 提高避免長句被截斷
+                # 2.5 系列會先「思考」並吃掉 output token，1024 容易在思考後把 JSON 截斷
+                # 而解析失敗。舊版 google-genai(0.3.0) 沒有 ThinkingConfig 可關思考，
+                # 改用拉高上限的方式讓「思考 + JSON」都塞得下。升級 SDK 後可改用
+                # thinking_config=types.ThinkingConfig(thinking_budget=0) 更省更快。
+                max_output_tokens=4096,
             ),
         )
 
         raw = response.text or ""
         data = parse_translation_response(raw, fallback_original=text)
         if data is None:
-            print(f"[翻譯] 無法解析回應：{raw[:200]}")
+            # raw 為空通常代表被安全過濾擋掉或輸出中斷；附上 finish_reason 方便判斷
+            reason = ""
+            try:
+                if response.candidates:
+                    reason = f"（finish_reason={response.candidates[0].finish_reason}）"
+            except Exception:
+                pass
+            shown = raw[:200] if raw else "<空>"
+            print(f"[翻譯] 無法解析回應{reason}：{shown}")
         return data

@@ -4,10 +4,15 @@
 """
 import asyncio
 import json
+import logging
 import queue
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# 壓掉 websockets 函式庫在前端瀏覽器硬斷線時印出的底層雜訊
+# （"data transfer failed" 那串 traceback），不影響功能與自己的 print
+logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse

@@ -84,15 +84,23 @@ def _lazy_import():
         download_model = _dl
 
 
-# 常見幻覺片語黑名單（Whisper 在無聲段容易產生這些）
-# 額外加入過去 initial_prompt 的片段，預防舊版 prompt 內容被當輸出
+# 子字串黑名單：句子只要「包含」這些片語就丟。
+# 只放「幾乎不可能是主持人真的講出來」的特徵詞，避免誤殺真話。
 HALLUCINATION_BLACKLIST = {
-    "謝謝觀看", "謝謝大家", "感謝您的觀看", "請訂閱", "請按讚",
-    "thanks for watching", "thank you for watching",
-    "字幕由", "subtitle", "字幕製作",
+    "謝謝觀看", "謝謝收看", "感謝您的觀看", "感謝收看", "謝謝大家收看",
+    "請訂閱", "請按讚", "我們下次再見", "下次再見",
+    "thanks for watching", "thank you for watching", "for watching",
+    "字幕由", "subtitle", "字幕製作", "獨播劇場",
     "請用中文轉寫", "用中文轉寫", "繁體中文",
     "演唱會主持人發言",
     "transcribe",
+}
+
+# 整句精確黑名單：這些短句可能是真話，但「整句正規化後剛好只有這幾個字」時必是幻覺。
+# 比對方式是「整句相等」而非子字串，所以較長的真實句子（如 thank you everyone）不會被誤殺。
+HALLUCINATION_EXACT = {
+    "thank you", "thanks", "謝謝", "謝謝你", "謝謝大家",
+    "bye", "bye bye", "拜拜",
 }
 
 
@@ -126,6 +134,10 @@ def _pick_allowed_from_probs(all_probs, fallback_lang="zh", fallback_prob=0.0):
 def _is_hallucination(text: str) -> bool:
     text_lower = text.lower().strip()
     if len(text_lower) < 2:
+        return True
+    # 整句精確比對：去掉頭尾標點/空白後，整句剛好等於某個短幻覺 → 丟
+    normalized = text_lower.strip(" .,!?。，！？、…\"'")
+    if normalized in HALLUCINATION_EXACT:
         return True
     for bl in HALLUCINATION_BLACKLIST:
         if bl in text_lower:
